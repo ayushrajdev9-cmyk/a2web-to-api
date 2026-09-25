@@ -1,0 +1,13 @@
+services:
+  a2web2api:
+    build: .
+    container_name: a2web2api
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      # mount cookie files and point cookie_file fields at /app/cookies/<name>.txt
+      - ./cookies:/app/cookies:ro
+    restart: unless-stopped
+    # NOTE: if upstreams reject Docker NAT traffic, uncomment:
+    # network_mode: host

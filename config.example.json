@@ -1,0 +1,96 @@
+{
+  "host": "0.0.0.0",
+  "port": 8081,
+  "api_keys": [],
+  "proxy": null,
+  "log_requests": true,
+  "retry_attempts": 3,
+  "retry_delay_sec": 2,
+  "request_timeout_sec": 180,
+  "cookie_file": null,
+  "default_model": "gemini-3.6-flash",
+  "providers": {
+
+    "gemini": {
+      "enabled": true,
+      "default_model": "gemini-3.6-flash",
+      "cookie_file": null,
+      "gemini_bl": "boq_assistant-bard-web-server_20260716.08_p0",
+      "auth_user": null,
+      "xsrf_token": null,
+      "temporary_chats": false
+    },
+
+    "deepseek": {
+      "enabled": true,
+      "default_model": "deepseek-chat",
+      "cookie_file": null,
+      "x_app_version": "20241129.1"
+    },
+
+    "grok": {
+      "enabled": true,
+      "default_model": "grok-4",
+      "cookie_file": null,
+      "is_reasoning": false,
+      "models": {
+        "grok-4": { "model": "grok-4", "desc": "Grok 4 flagship" },
+        "grok-3": { "model": "grok-3", "desc": "Grok 3" },
+        "grok-3-fast": { "model": "grok-3-fast", "desc": "Grok 3 fast" }
+      }
+    },
+
+    "claude": {
+      "enabled": true,
+      "default_model": "claude-sonnet-4",
+      "cookie_file": null,
+      "organization": null,
+      "models": {
+        "claude-opus-4": { "model": "claude-opus-4", "desc": "Claude Opus 4" },
+        "claude-sonnet-4": { "model": "claude-sonnet-4", "desc": "Claude Sonnet 4" },
+        "claude-3-7-sonnet": { "model": "claude-3-7-sonnet", "desc": "Claude 3.7 Sonnet" }
+      }
+    },
+
+    "chatgpt": {
+      "enabled": true,
+      "default_model": "chatgpt-4o",
+      "cookie_file": null,
+      "device_id": null,
+      "models": {
+        "chatgpt-4o": { "model": "gpt-4o", "desc": "ChatGPT 4o" },
+        "chatgpt-4o-mini": { "model": "gpt-4o-mini", "desc": "ChatGPT 4o mini" },
+        "chatgpt-o3-mini": { "model": "o3-mini", "desc": "ChatGPT o3 mini" }
+      }
+    },
+
+    "custom": {
+      "enabled": false,
+      "providers": [
+        {
+          "id": "perplexity",
+          "label": "Perplexity",
+          "default_model": "perplexity-sonar",
+          "models": {
+            "perplexity-sonar": { "model": "sonar", "desc": "Perplexity Sonar" }
+          },
+          "cookie_file": null,
+          "endpoint": "https://www.perplexity.ai/rest/chat/answer",
+          "method": "POST",
+          "headers": { "Content-Type": "application/json" },
+          "body": {
+            "query": "{transcript}",
+            "model": "{model}",
+            "source": "default",
+            "attachments": []
+          },
+          "response": {
+            "mode": "sse",
+            "data_path": "answer",
+            "final_text_path": "answer"
+          }
+        }
+      ]
+    }
+  }
+}

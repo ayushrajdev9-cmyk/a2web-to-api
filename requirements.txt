@@ -1,0 +1,6 @@
+# a2web2api runtime dependencies
+httpx>=0.24.0
+
+# --- optional (dev) ---
+# pytest>=7.0        # run tests/test_smoke.py
+# pyperclip           # clipboard cookie helper (scripts/)
