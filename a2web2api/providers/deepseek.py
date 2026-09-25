@@ -112,11 +112,26 @@ class DeepSeekProvider(BaseProvider):
         resp = self._post(body)
         if resp.status_code != 200:
             raise RuntimeError(f"DeepSeek upstream {resp.status_code}: {resp.text[:300]}")
-        data = resp.json()
+        data = self._json(resp)
         try:
             return data["choices"][0]["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as e:
             raise RuntimeError(f"unexpected DeepSeek response: {str(data)[:300]}") from e
+
+    def _json(self, resp):
+        """Parse JSON, turning the login-page response into a clear message.
+
+        An expired or rejected cookie makes DeepSeek answer with HTML, which
+        otherwise surfaces as a bare JSONDecodeError.
+        """
+        try:
+            return resp.json()
+        except (json.JSONDecodeError, ValueError):
+            snippet = (resp.text or "").strip()[:120].replace("\n", " ")
+            raise RuntimeError(
+                "DeepSeek returned a non-JSON response (the cookie is expired, "
+                f"rejected, or the IP is blocked). First bytes: {snippet!r}"
+            ) from None
 
     def _stream(self, body):
         last_err = None
@@ -129,18 +144,31 @@ class DeepSeekProvider(BaseProvider):
                     if resp.status_code != 200:
                         raise RuntimeError(f"DeepSeek upstream {resp.status_code}")
                     emitted = ""
+                    saw_event = False
                     for event, data_str in iter_sse(resp.iter_lines()):
                         if data_str == "[DONE]":
                             return
+                        saw_event = True
                         try:
                             chunk = json.loads(data_str)
                         except json.JSONDecodeError:
+                            # a non-SSE body means the session was not accepted
+                            if not emitted and "<html" in data_str.lower():
+                                raise RuntimeError(
+                                    "DeepSeek returned an HTML login page: the cookie is "
+                                    "expired, rejected, or the IP is blocked"
+                                ) from None
                             continue
                         delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
                         text = delta.get("content")
                         if text:
                             yield text
                             emitted += text
+                    if not saw_event and not emitted:
+                        raise RuntimeError(
+                            "DeepSeek sent no stream events (the cookie is expired, "
+                            "rejected, or the IP is blocked)"
+                        )
                 return
             except Exception as e:
                 last_err = e
