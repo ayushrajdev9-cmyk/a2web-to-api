@@ -33,6 +33,7 @@ from ..util import estimate_tokens
 #   1=FAST, 2=THINKING, 3=PRO, 4=AUTO, 5=FAST_DYNAMIC_THINKING, 6=FLASH_LITE
 
 BUILTIN_MODELS = {
+    "gemini-3.7-flash": {"mode": 1, "think": 4, "desc": "Latest all-around model (Gemini 3.7 Flash)"},
     "gemini-3.6-flash": {"mode": 1, "think": 4, "desc": "All-around model (Gemini 3.6 Flash)"},
     "gemini-3.5-flash": {"mode": 1, "think": 4, "desc": "Alias for gemini-3.6-flash"},
     "gemini-3.5-flash-thinking": {"mode": 2, "think": 0, "desc": "Deep thinking, longest output (~20k chars)"},
