@@ -8,9 +8,33 @@ Accepted formats (same as gemini-web2api):
 
 import json
 import os
+import re
 import time
 
 _cache = {"path": None, "mtime": 0, "cookie_str": "", "extra": {}}
+
+# a cookie header is a single line of `name=value` pairs joined by ';'
+_PAIR_RE = re.compile(r"^[A-Za-z0-9_.\-]+=([^;\s]*(;\s*)?)+$")
+
+
+def looks_like_cookie(text: str) -> bool:
+    """True when `text` plausibly is a cookie header.
+
+    Guards against instructions or notes left in the cookie file being sent as
+    a session: a real header is one line, and every ';'-separated chunk must
+    look like `name=value`.
+    """
+    if not text:
+        return False
+    text = text.strip()
+    if not text or "\n" in text or "\r" in text:
+        return False
+    pairs = [p.strip() for p in text.split(";") if p.strip()]
+    if not pairs:
+        return False
+    good = sum(1 for p in pairs if _PAIR_RE.match(p))
+    # allow a little slack, but a file of prose must not pass
+    return good >= max(1, len(pairs) - 1)
 
 
 def load_cookie(cookie_file: str, proxy: str = None):
@@ -33,10 +57,16 @@ def load_cookie(cookie_file: str, proxy: str = None):
             cookie_str = data.get("cookie", "")
             extra = {k: v for k, v in data.items() if k != "cookie"}
         elif "\t" in content and any(line.startswith(("#", "")) and "\t" in line for line in content.splitlines()):
-            # Netscape cookie file
+            # Netscape cookie file. Lines prefixed '#HttpOnly_' are *cookies*,
+            # not comments — most session cookies are HttpOnly, so skipping
+            # every '#' line would silently drop the session.
             pairs = []
             for line in content.splitlines():
-                if line.startswith("#") or not line.strip():
+                if not line.strip():
+                    continue
+                if line.startswith("#HttpOnly_"):
+                    line = line[len("#HttpOnly_"):]
+                elif line.startswith("#"):
                     continue
                 parts = line.split("\t")
                 if len(parts) >= 7:
@@ -49,6 +79,10 @@ def load_cookie(cookie_file: str, proxy: str = None):
                 extra["sapisid"] = pairs["SAPISID"]
     except Exception:
         pass
+
+    if cookie_str and not looks_like_cookie(cookie_str):
+        # a notes file, a README, or a half-finished paste is not a session
+        cookie_str, extra = "", {}
 
     _cache.update({"path": cookie_file, "mtime": os.path.getmtime(cookie_file),
                    "cookie_str": cookie_str, "extra": extra})
