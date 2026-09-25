@@ -3,6 +3,14 @@
 import abc
 
 
+class AuthRequired(ValueError):
+    """A cookie-gated provider was called without a usable session.
+
+    Subclasses ValueError so the server surfaces it as a client-side 400 with
+    an actionable message rather than an opaque upstream parse failure.
+    """
+
+
 class BaseProvider(abc.ABC):
     """A chat provider backed by a web service.
 
@@ -18,6 +26,8 @@ class BaseProvider(abc.ABC):
     #: {alias: {"model": upstream_id, "desc": "..."}} — aliases exposed via /v1/models
     models = {}
     default_model = ""
+    #: path to a session-cookie file; None means the provider works anonymously
+    cookie_file = None
 
     def __init__(self, cfg: dict):
         # cfg: merged global + provider section; helpers attached by factory
@@ -42,6 +52,22 @@ class BaseProvider(abc.ABC):
     def models_lookup(self) -> dict:
         """Map of exposed alias -> {"model": upstream, "desc": ...}."""
         return dict(self.models)
+
+    def require_cookie(self):
+        """Fail fast when a cookie-gated provider has no session.
+
+        Without this the request goes out unauthenticated and comes back as an
+        HTML login page, which surfaces as a baffling JSON parse error.
+        """
+        from ..cookie import load_cookie
+        cookie_str, _ = load_cookie(self.cookie_file)
+        if not cookie_str:
+            raise AuthRequired(
+                f"provider '{self.name}' requires a session cookie: log in, export the "
+                f"cookies, and set providers.{self.name}.cookie_file in config.json "
+                f"(currently: {self.cookie_file or 'not set'})"
+            )
+        return cookie_str
 
     # ── core ───────────────────────────────────────────────────────────────
 

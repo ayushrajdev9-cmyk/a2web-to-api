@@ -118,12 +118,11 @@ class ClaudeProvider(BaseProvider):
         return body
 
     def chat(self, messages, model, stream=False, images=None, tools=None, tool_choice=None, **kw):
+        self.require_cookie()
         if images:
             # base64 attachment would require claude.ai attachment upload flow
             raise ValueError("Claude web attachment upload is not implemented; text only")
-        if tools and tool_choice != "none":
-            raise ValueError("Claude web tool calling is not implemented; text only")
-        prompt = transcript(messages)
+        prompt = transcript(messages, tools, tool_choice)
         if not prompt.strip():
             raise ValueError("empty prompt")
         body = self._body(prompt, model)

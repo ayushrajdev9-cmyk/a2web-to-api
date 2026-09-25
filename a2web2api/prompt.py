@@ -134,30 +134,94 @@ def _tool_choice_instruction(tool_choice, tool_defs):
     return ""
 
 
+def tool_instruction(tools, tool_choice="auto"):
+    """Render the tool-use contract as standalone text.
+
+    Used two ways: injected into a flattened transcript, or prepended as a
+    system message for providers that keep native message arrays.
+    """
+    tool_defs = []
+    for tool in tools or []:
+        if not isinstance(tool, dict):
+            continue
+        fn = tool.get("function", tool) if tool.get("type") == "function" else tool
+        if not fn.get("name"):
+            continue
+        tool_defs.append({
+            "name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {}),
+        })
+    if not tool_defs:
+        return ""
+    constraint = _tool_choice_instruction(tool_choice, tool_defs)
+    return (
+        "# Tool Use\n\n"
+        "You can call the following tools. Call format:\n"
+        '```tool_call\n{"name": "func_name", "arguments": {...}}\n```\n'
+        "When calling tools, output ONLY the tool_call block(s).\n\n"
+        f"Available tools:\n{json.dumps(tool_defs, ensure_ascii=False, indent=2)}"
+        f"{constraint}"
+    )
+
+
+def with_tool_instruction(messages, tools=None, tool_choice="auto"):
+    """Prepend the tool contract as a system message (native-array providers).
+
+    Never mutates the caller's messages.
+    """
+    msgs = list(messages or [])
+    if not tools or tool_choice == "none":
+        return msgs
+    instr = tool_instruction(tools, tool_choice)
+    if not instr:
+        return msgs
+    for i, m in enumerate(msgs):
+        if isinstance(m, dict) and m.get("role") == "system":
+            merged = dict(m)
+            merged["content"] = f'{instr}\n\n{m.get("content", "")}'.strip()
+            return msgs[:i] + [merged] + msgs[i + 1:]
+    return [{"role": "system", "content": instr}] + msgs
+
+
+def fold_tool_messages(messages):
+    """Render assistant tool_calls and tool-role results as plain text.
+
+    Providers that only accept system/user/assistant cannot carry tool messages,
+    so a tool round-trip is folded into the conversation as readable text.
+    """
+    out = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role", "user")
+        content = m.get("content", "")
+        if role == "tool":
+            label = m.get("name") or m.get("tool_call_id") or ""
+            out.append({"role": "user",
+                        "content": f"[Tool result for {label}]: {content}"})
+            continue
+        if role == "assistant" and m.get("tool_calls"):
+            calls = []
+            for tc in m["tool_calls"]:
+                fn = (tc or {}).get("function", {})
+                calls.append(f'Called tool "{fn.get("name", "")}" with arguments '
+                             f'{fn.get("arguments", "{}")}')
+            if content:
+                out.append({"role": "assistant", "content": str(content)})
+            out.append({"role": "user", "content": "\n".join(calls)})
+            continue
+        out.append({"role": role, "content": content})
+    return out
+
+
 def transcript(messages, tools=None, tool_choice=None):
     """Flatten OpenAI messages (+tools) into a single text prompt."""
     parts = []
     if tools and tool_choice != "none":
-        tool_defs = []
-        for tool in tools:
-            if not isinstance(tool, dict):
-                continue
-            fn = tool.get("function", tool) if tool.get("type") == "function" else tool
-            tool_defs.append({
-                "name": fn.get("name", ""),
-                "description": fn.get("description", ""),
-                "parameters": fn.get("parameters", {}),
-            })
-        if tool_defs:
-            constraint = _tool_choice_instruction(tool_choice, tool_defs)
-            parts.append(
-                "# Tool Use\n\n"
-                "You can call the following tools. Call format:\n"
-                '```tool_call\n{"name": "func_name", "arguments": {...}}\n```\n'
-                "When calling tools, output ONLY the tool_call block(s).\n\n"
-                f"Available tools:\n{json.dumps(tool_defs, ensure_ascii=False, indent=2)}"
-                f"{constraint}"
-            )
+        instr = tool_instruction(tools, tool_choice)
+        if instr:
+            parts.append(instr)
 
     for msg in messages or []:
         if not isinstance(msg, dict):
@@ -196,8 +260,36 @@ def transcript(messages, tools=None, tool_choice=None):
     return "\n\n".join(p for p in parts if p)
 
 
-def parse_tool_calls(text):
-    """Extract ```tool_call blocks. Returns (clean_text, tool_calls_list)."""
+_TOOL_MARKER = "```tool_call"
+
+
+def fence_pending(text: str) -> bool:
+    """True while `text` may still turn into a ```tool_call block.
+
+    Streaming holds text back so a raw tool block never leaks into content.
+    Fences alternate open/close, so only the 0th, 2nd, 4th... open a block; if
+    any of them opened (or may still open) a tool block, keep holding. A fence
+    whose marker is clearly something else (```json, ```py) releases at once.
+    """
+    starts = [m.start() for m in re.finditer(r"```", text)]
+    if not starts:
+        # a trailing run of 1-2 backticks may still grow into a fence
+        run = len(text) - len(text.rstrip("`"))
+        return 1 <= run <= 2
+    for start in starts[::2]:
+        tail = text[start + 3:].split("\n", 1)[0]
+        if tail == "" or _TOOL_MARKER[3:].startswith(tail):
+            return True
+    return False
+
+
+def parse_tool_calls(text, strip=True):
+    """Extract ```tool_call blocks. Returns (clean_text, tool_calls_list).
+
+    strip=False keeps surrounding whitespace, which streaming needs when it
+    re-sends the prose it held back — stripping there would drop characters
+    the client never received.
+    """
     tool_calls = []
     pattern = r'```tool_call\s*\n(.*?)\n```'
     clean_parts = []
@@ -218,4 +310,5 @@ def parse_tool_calls(text):
         except (json.JSONDecodeError, KeyError):
             pass
     clean_parts.append(text[last_end:])
-    return "".join(clean_parts).strip(), tool_calls
+    clean = "".join(clean_parts)
+    return (clean.strip() if strip else clean), tool_calls

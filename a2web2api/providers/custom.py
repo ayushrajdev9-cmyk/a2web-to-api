@@ -46,7 +46,7 @@ import httpx
 
 from .base import BaseProvider
 from ..cookie import load_cookie
-from ..prompt import normalize_messages, transcript
+from ..prompt import normalize_messages, transcript, with_tool_instruction
 
 PLACEHOLDER_RE = re.compile(r"\{([a-z_]+)\}")
 
@@ -182,6 +182,7 @@ class CustomProvider(BaseProvider):
         return self._render_value(self.body_template, context, messages)
 
     def chat(self, messages, model, stream=False, images=None, tools=None, tool_choice=None, **kw):
+        messages = with_tool_instruction(messages, tools, tool_choice or "auto")
         body = self._body(messages, model)
         if stream and self.resp_mode == "sse":
             return self._stream(body)
@@ -190,8 +191,9 @@ class CustomProvider(BaseProvider):
         return self._complete(body)
 
     def _request_args(self, body):
+        # proxy/follow_redirects belong to the Client constructor, not .request()
         args = {"headers": self._headers(), "timeout": self.timeout,
-                "proxy": self.proxy, "follow_redirects": True}
+                "follow_redirects": True}
         if self.method == "GET":
             args["params"] = body if isinstance(body, dict) else None
         else:

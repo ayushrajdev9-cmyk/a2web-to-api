@@ -21,7 +21,8 @@ model you want, and add new ones from config without writing code.
 - **Optional API keys** — OpenAI-style `Bearer` / `x-api-key` / `?key=` auth
 - **Per-provider routing** — `deepseek/deepseek-chat`, `grok/grok-3`, `chatgpt/chatgpt-4o`, …
 - **Multi-turn** — full message history is forwarded (per provider capability)
-- **Tool calling + image input** where the provider supports it
+- **Tool calling on every provider** — native on Gemini, prompt-emulated elsewhere; agents never hit a capability error
+- **Image input** via OpenAI `image_url` parts where the provider supports it
 - **Proxy aware** — global or per-provider, via config or env
 - **Retries + backoff** per provider, streamed token deltas
 - **Pure Python** — stdlib HTTP server, one dependency (`httpx`)
@@ -99,11 +100,11 @@ print(resp.choices[0].message.content)
 
 | Provider  | Model prefix | Default model         | Cookie required | Notes |
 | --------- | ------------ | --------------------- | --------------- | ----- |
-| Gemini    | `gemini/`    | `gemini-3.6-flash`    | no (anonymous works) | StreamGenerate protocol; images + tools |
-| DeepSeek  | `deepseek/`  | `deepseek-chat`       | yes | native OpenAI-format web API |
-| ChatGPT   | `chatgpt/`   | `chatgpt-4o`          | yes | anti-bot may 403; see notes |
-| Grok      | `grok/`      | `grok-4`              | yes | `grok.com/rest/app-chat` |
-| Claude    | `claude/`    | `claude-sonnet-4`     | yes | `claude.ai/api/chat`, org auto-discovered |
+| Gemini    | `gemini/`    | `gemini-3.6-flash`    | no (anonymous works) | StreamGenerate protocol; images + **native** tools |
+| DeepSeek  | `deepseek/`  | `deepseek-chat`       | yes | native OpenAI-format web API; emulated tools |
+| ChatGPT   | `chatgpt/`   | `chatgpt-4o`          | yes | anti-bot may 403; see notes; emulated tools |
+| Grok      | `grok/`      | `grok-4`              | yes | `grok.com/rest/app-chat`; emulated tools |
+| Claude    | `claude/`    | `claude-sonnet-4`     | yes | `claude.ai/api/chat`, org auto-discovered; emulated tools |
 | custom    | *(your id)*  | *(you define)*        | varies | config-driven; add anything |
 
 Model names can be addressed two ways:
@@ -113,13 +114,36 @@ Model names can be addressed two ways:
 "deepseek/deepseek-chat" → explicit provider routing
 ```
 
+### Tool calling
+
+Every provider accepts OpenAI `tools` on every request — you never get a
+"does not support tool calling" error, which matters because agents such as
+opencode, Cline and Roo send a tool schema on *every* turn.
+
+- **Gemini** speaks the native tool protocol, so arguments come back structured.
+- **All other providers emulate tools at the prompt level**: the tool schemas are
+  injected into the prompt (as a system message, or inline in the flattened
+  transcript), the model is asked to answer with a ```` ```tool_call ```` block, and
+  that block is parsed back into a real OpenAI `tool_calls` object with
+  `finish_reason: "tool_calls"`.
+
+Emulated tool calls work in streaming and non-streaming mode, and multi-turn tool
+loops are supported — an assistant `tool_calls` message plus a `tool` result are
+folded back into the conversation so the model can use the result. In streaming
+mode the raw ```` ```tool_call ```` block is held back and never leaks into
+`content`; any prose around it is still delivered, exactly once.
+
+Caveats of emulation: the model can decline to follow the requested format, and
+`tool_choice: "required"` / a forced function name is advisory only (it is stated
+in the prompt, not enforced). Arguments are whatever the model wrote, so validate
+them before use.
+
 ### Gemini extras
 
 - `gemini-3.5-flash-thinking` for extended thinking
 - thinking depth override: append `@think=N` (0 = deepest … 4 = shallowest), e.g. `gemini-3.5-flash-thinking@think=0`
 - `gemini-3.1-pro` for Pro routing (requires a cookie with a paid Gemini account for *real* Pro)
 - image input via OpenAI `image_url` parts (http(s) URL or `data:` URL)
-- tool calling (OpenAI `tools` format)
 
 ### Cookie export
 
@@ -245,8 +269,13 @@ python -m pytest tests/ -q       # offline: config, providers, routing, server p
   config-overridable so you can patch without code.
 - **ChatGPT anti-bot** (Arkose/Turnstile, Cloudflare) can reject cookie-only access from
   datacenter IPs — a residential proxy helps.
-- **Tool calling / image input** are implemented where the provider supports it; the server returns
-  a clear `400` otherwise.
+- **Tool calling** is available on every provider — natively on Gemini, emulated at the
+  prompt level elsewhere (see [Tool calling](#tool-calling) for the caveats).
+- **Image input** is implemented for Gemini; other providers return a clear `400`
+  (`provider 'x' does not support image input`) rather than silently dropping the image.
+- **Missing cookies** fail fast with an actionable message
+  (`provider 'x' requires a session cookie: ... set providers.x.cookie_file`) instead of an
+  opaque upstream parse error.
 - Use within the terms of the respective services. This project does not circumvent authentication —
   you supply your own session cookies for accounts you own.
 

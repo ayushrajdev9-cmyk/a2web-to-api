@@ -14,7 +14,7 @@ import httpx
 
 from .base import BaseProvider
 from ..cookie import load_cookie
-from ..prompt import normalize_messages
+from ..prompt import fold_tool_messages, normalize_messages, with_tool_instruction
 
 BUILTIN_MODELS = {
     "deepseek-chat": {"desc": "DeepSeek V3 general chat model"},
@@ -57,10 +57,14 @@ class DeepSeekProvider(BaseProvider):
 
     # ── core ───────────────────────────────────────────────────────────────
 
-    def chat(self, messages, model, stream=False, images=None, **kw):
+    def chat(self, messages, model, stream=False, images=None, tools=None,
+             tool_choice=None, **kw):
+        self.require_cookie()
         if images:
             raise ValueError("DeepSeek web does not support image input")
-        msgs = normalize_messages(messages, supported_roles=("system", "user", "assistant"))
+        msgs = normalize_messages(
+            fold_tool_messages(with_tool_instruction(messages, tools, tool_choice or "auto")),
+            supported_roles=("system", "user", "assistant"))
         if not any(m["content"].strip() for m in msgs if m["role"] != "system") and \
            not any(m["content"].strip() for m in msgs if m["role"] == "user"):
             raise ValueError("empty prompt")

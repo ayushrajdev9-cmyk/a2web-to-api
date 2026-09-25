@@ -113,11 +113,10 @@ class GrokProvider(BaseProvider):
         return body
 
     def chat(self, messages, model, stream=False, images=None, tool_choice=None, tools=None, **kw):
+        self.require_cookie()
         if images:
             raise ValueError("Grok web image upload is not implemented; text only")
-        if tools and tool_choice != "none":
-            raise ValueError("Grok web tool calling is not implemented; text only")
-        prompt = transcript(messages)
+        prompt = transcript(messages, tools, tool_choice)
         if not prompt.strip():
             raise ValueError("empty prompt")
         body = self._body(prompt, model)

@@ -19,10 +19,11 @@ from . import __version__
 from .config import load_config, find_config
 from .providers import build_providers
 from .models import ModelResolver
-from .prompt import extract_images, parse_tool_calls
+from .prompt import extract_images, fence_pending, parse_tool_calls
 from .util import (
     log, usage_from, new_completion_id, now,
-    sse_chunk, sse_done, chunk_first, chunk_delta, chunk_end, non_stream_response,
+    sse_chunk, sse_done, chunk_first, chunk_delta, chunk_end, chunk_tool_calls,
+    non_stream_response,
 )
 
 
@@ -175,8 +176,8 @@ class A2WebHandler(BaseHTTPRequestHandler):
             raise ValueError(f"provider '{pid}' does not support image input")
         tools = req.get("tools")
         tool_choice = req.get("tool_choice", "auto")
-        if tools and prov.supports_tools() is False:
-            raise ValueError(f"provider '{pid}' does not support tool calling")
+        # Providers without native tool support emulate them at the prompt
+        # level (see prompt.tool_instruction), so tools are never rejected.
         return pid, prov, upstream, messages, images, stream, tools, tool_choice
 
     def _run(self, pid, prov, upstream, messages, images, stream, tools, tool_choice):
@@ -212,14 +213,38 @@ class A2WebHandler(BaseHTTPRequestHandler):
                 self._start_sse()
                 self.wfile.write(sse_chunk(chunk_first(cid, model_label)))
                 self.wfile.flush()
+                seen = ""
+                emitted = 0
                 for delta in gen:
-                    text += delta
-                    self.wfile.write(sse_chunk(chunk_delta(cid, model_label, delta)))
-                    self.wfile.flush()
-                self.wfile.write(sse_chunk(chunk_end(cid, model_label, "stop")))
+                    if not delta:
+                        continue
+                    seen += delta
+                    # Hold back anything that could still become a
+                    # ```tool_call block; fence_pending needs the whole text so
+                    # far to tell an opening fence from a closing one.
+                    if not fence_pending(seen):
+                        if seen[emitted:]:
+                            self.wfile.write(
+                                sse_chunk(chunk_delta(cid, model_label, seen[emitted:])))
+                            self.wfile.flush()
+                        emitted = len(seen)
+                text = seen
+                clean, tool_calls = parse_tool_calls(seen)
+                if tool_calls:
+                    # prose trapped in the held tail is still owed to the client;
+                    # prose already streamed must not be sent twice
+                    owed, _ = parse_tool_calls(seen[emitted:], strip=False)
+                    self.wfile.write(sse_chunk(
+                        chunk_tool_calls(cid, model_label, tool_calls, owed or None)))
+                else:
+                    if seen[emitted:]:
+                        self.wfile.write(
+                            sse_chunk(chunk_delta(cid, model_label, seen[emitted:])))
+                        self.wfile.flush()
+                    self.wfile.write(sse_chunk(chunk_end(cid, model_label, "stop")))
                 self.wfile.write(sse_done())
                 self.wfile.flush()
-                log(f"[{pid}] streamed {len(text)} chars", enabled=self.server.log_requests,
+                log(f"[{pid}] streamed {len(seen)} chars", enabled=self.server.log_requests,
                     component="chat")
             except (BrokenPipeError, ConnectionResetError):
                 pass

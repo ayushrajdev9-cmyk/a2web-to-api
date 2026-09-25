@@ -18,7 +18,7 @@ import httpx
 
 from .base import BaseProvider
 from ..cookie import load_cookie
-from ..prompt import normalize_messages
+from ..prompt import fold_tool_messages, normalize_messages, with_tool_instruction
 from .deepseek import iter_sse
 
 BUILTIN_MODELS = {
@@ -130,10 +130,11 @@ class ChatGPTCookieProvider(BaseProvider):
         return body
 
     def chat(self, messages, model, stream=False, images=None, tools=None, tool_choice=None, **kw):
+        self.require_cookie()
         if images:
             raise ValueError("ChatGPT web attachment upload is not implemented; text only")
-        if tools and tool_choice != "none":
-            raise ValueError("ChatGPT web tool calling is not implemented; text only")
+        messages = fold_tool_messages(
+            with_tool_instruction(messages, tools, tool_choice or "auto"))
         body = self._body(messages, model)
         if stream:
             return self._stream(body, model)

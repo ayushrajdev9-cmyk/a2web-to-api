@@ -73,6 +73,21 @@ def chunk_end(cid: str, model: str, finish: str = "stop") -> dict:
     }
 
 
+def chunk_tool_calls(cid: str, model: str, tool_calls: list, content: str = None) -> dict:
+    """Chunk carrying tool_calls parsed out of emulated (prompt-level) tool use."""
+    delta = {}
+    if content:
+        delta["content"] = content
+    delta["tool_calls"] = tool_calls
+    return {
+        "id": cid,
+        "object": "chat.completion.chunk",
+        "created": now(),
+        "model": model,
+        "choices": [{"index": 0, "delta": delta, "finish_reason": "tool_calls"}],
+    }
+
+
 def non_stream_response(cid: str, model: str, message: dict, finish: str,
                         prompt: str, completion: str) -> dict:
     return {
